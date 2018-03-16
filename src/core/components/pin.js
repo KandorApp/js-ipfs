@@ -8,21 +8,22 @@ const pinSet = require('./pin-set')
 const normalizeHashes = require('../utils').normalizeHashes
 const promisify = require('promisify-es6')
 const multihashes = require('multihashes')
-const Key = require('interface-datastore').Key
 const each = require('async/each')
 const series = require('async/series')
 const waterfall = require('async/waterfall')
 const until = require('async/until')
 const once = require('once')
 
-const toB58String = multihashes.toB58String
+function toB58String (hash) {
+  return new CID(hash).toBaseEncodedString()
+}
 
 module.exports = function pin (self) {
   let directPins = new Set()
   let recursivePins = new Set()
   let internalPins = new Set()
 
-  const pinDataStoreKey = new Key('/local/pins')
+  const pinDataStoreKey = '/local/pins'
 
   const repo = self._repo
   const dag = self.dag
@@ -50,7 +51,7 @@ module.exports = function pin (self) {
         options = null
       }
       callback = once(callback)
-      const recursive = !options || options.recursive !== false
+      const recursive = options ? options.recursive : true
       normalizeHashes(self, hashes, (err, mhs) => {
         if (err) { return callback(err) }
         // verify that each hash can be pinned
@@ -71,9 +72,7 @@ module.exports = function pin (self) {
           } else {
             if (recursivePins.has(key)) {
               // recursive supersedes direct, can't have both
-              return cb(
-                new Error(`${key} already pinned recursively`)
-              )
+              return cb(new Error(`${key} already pinned recursively`))
             }
             if (directPins.has(key)) {
               // already directly pinned
@@ -101,6 +100,7 @@ module.exports = function pin (self) {
           // persist updated pin sets to datastore
           pin.flush((err, root) => {
             if (err) { return callback(err) }
+            self.log(`Added pins: ${results}`)
             return callback(null, results.map(key => ({hash: key})))
           })
         })
@@ -122,16 +122,16 @@ module.exports = function pin (self) {
           pin.isPinnedWithType(multihash, pin.types.all, (err, res) => {
             if (err) { return cb(err) }
             const { pinned, reason } = res
-            if (!pinned) { return cb(new Error('not pinned')) }
             const key = toB58String(multihash)
+            if (!pinned) {
+              return cb(new Error(`${key} is not pinned`))
+            }
             switch (reason) {
               case (pin.types.recursive):
                 if (recursive) {
                   return cb(null, key)
                 } else {
-                  return cb(new Error(
-                    `${key} is pinned recursively`
-                  ))
+                  return cb(new Error(`${key} is pinned recursively`))
                 }
               case (pin.types.direct):
                 return cb(null, key)
@@ -149,6 +149,7 @@ module.exports = function pin (self) {
           // persist updated pin sets to datastore
           pin.flush((err, root) => {
             if (err) { return callback(err) }
+            self.log(`Removed pins: ${results}`)
             return callback(null, results.map(key => ({hash: key})))
           })
         })
@@ -173,7 +174,7 @@ module.exports = function pin (self) {
         type = options.type.toLowerCase()
       }
       callback = once(callback)
-      if (Object.keys(pin.types).indexOf(type) < 0) {
+      if (!pin.types[type]) {
         return callback(new Error(
           `Invalid type '${type}', must be one of {direct, indirect, recursive, all}`
         ))
@@ -206,10 +207,7 @@ module.exports = function pin (self) {
                   })
               }
             })
-          }), (err, results) => {
-            if (err) { return callback(err) }
-            return callback(null, results)
-          })
+          }), callback)
         })
       } else {
         // show all pinned items of type
@@ -269,6 +267,7 @@ module.exports = function pin (self) {
       if ((pinType === pin.types.direct)) {
         return callback(null, {pinned: false})
       }
+      // internal
       if ((pinType === pin.types.internal || pinType === pin.types.all) &&
           internalPins.has(key)) {
         return callback(null, {pinned: true, reason: pin.types.internal})
@@ -318,9 +317,6 @@ module.exports = function pin (self) {
     getIndirectKeys: (callback) => {
       const indirectKeys = new Set()
       const rKeys = pin.recursiveKeys()
-      if (!rKeys.length) {
-        return callback(null, [])
-      }
       each(rKeys, (multihash, cb) => {
         dag._getRecursive(multihash, (err, nodes) => {
           if (err) { return cb(err) }
@@ -374,6 +370,7 @@ module.exports = function pin (self) {
         (_, cb) => repo.datastore.put(pinDataStoreKey, handle.root.multihash, cb)
       ], (err, result) => {
         if (err) { return callback(err) }
+        self.log(`Flushed ${handle.root} to the datastore.`)
         internalPins = newInternalPins
         return callback(null, handle.root)
       })
@@ -391,7 +388,7 @@ module.exports = function pin (self) {
       waterfall([
         (cb) => repo.closed ? repo.datastore.open(cb) : cb(null, null), // hack for CLI tests
         (_, cb) => repo.datastore.has(pinDataStoreKey, cb),
-        (has, cb) => has ? cb() : callback(),
+        (has, cb) => has ? cb() : cb('No pins to load'),
         (cb) => repo.datastore.get(pinDataStoreKey, cb),
         (mh, cb) => dag.get(new CID(mh), cb),
         (root, cb) => handle.put('root', root.value, cb),
@@ -399,13 +396,16 @@ module.exports = function pin (self) {
         (rKeys, cb) => handle.put('rKeys', rKeys, cb),
         (cb) => pin.set.loadSet(handle.root, pin.types.direct, logInternalKey, cb)
       ], (err, dKeys) => {
-        if (err && err !== 'break') { return callback(err) }
+        if (err && err !== 'No pins to load') {
+          return callback(err)
+        }
         if (dKeys) {
           directPins = new Set(dKeys.map(mh => toB58String(mh)))
           recursivePins = new Set(handle.rKeys.map(mh => toB58String(mh)))
           logInternalKey(handle.root.multihash)
           internalPins = newInternalPins
         }
+        self.log('Loaded pins from the datastore')
         return callback()
       })
     })

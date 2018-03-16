@@ -7,12 +7,11 @@ const dirtyChai = require('dirty-chai')
 const expect = chai.expect
 chai.use(dirtyChai)
 const multihashes = require('multihashes')
-const utils = require('../../src/core/utils')
 
 // This gets replaced by `create-repo-browser.js` in the browser
 const createTempRepo = require('../utils/create-repo-nodejs.js')
-
 const IPFS = require('../../src/core')
+const utils = require('../../src/core/utils')
 
 describe('utils', () => {
   const rootHashString = 'QmUhUuiTKkkK8J6JZ9zmj8iNHPuNfGYcszgRumzhHBxEEU'
@@ -30,6 +29,7 @@ describe('utils', () => {
           links: []
         })
     })
+
     it('parses path with links', function () {
       expect(utils.parseIpfsPath(`${rootHashString}/docs/index`))
         .to.deep.equal({
@@ -37,6 +37,7 @@ describe('utils', () => {
           links: ['docs', 'index']
         })
     })
+
     it('parses path with /ipfs/ prefix', function () {
       expect(utils.parseIpfsPath(`/ipfs/${rootHashString}/about`))
         .to.deep.equal({
@@ -44,11 +45,13 @@ describe('utils', () => {
           links: ['about']
         })
     })
+
     it('returns error for malformed path', function () {
       const result = utils.parseIpfsPath(`${rootHashString}//about`)
       expect(result.error).to.be.instanceof(Error)
         .and.have.property('message', 'invalid ipfs ref path')
     })
+
     it('returns error if root is not a valid CID', function () {
       const result = utils.parseIpfsPath('invalid/ipfs/path')
       expect(result.error).to.be.instanceof(Error)

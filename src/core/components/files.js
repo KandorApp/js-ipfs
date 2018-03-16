@@ -18,6 +18,7 @@ const CID = require('cids')
 const toB58String = require('multihashes').toB58String
 
 function noop () {}
+function identity (x) { return x }
 
 function prepareFile (self, opts, file, callback) {
   opts = opts || {}
@@ -125,7 +126,8 @@ module.exports = function files (self) {
     }, options)
 
     let total = 0
-    let prog = opts.progress || (() => {})
+    const shouldPin = 'pin' in opts ? opts.pin : true
+    const prog = opts.progress || noop
     const progress = (bytes) => {
       total += bytes
       prog(total)
@@ -137,7 +139,7 @@ module.exports = function files (self) {
       pull.flatten(),
       importer(self._ipld, opts),
       pull.asyncMap(prepareFile.bind(null, self, opts)),
-      pull.asyncMap(pinFile.bind(null, self))
+      shouldPin ? pull.asyncMap(pinFile.bind(null, self)) : identity
     )
   }
 
