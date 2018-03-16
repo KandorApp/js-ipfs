@@ -206,7 +206,7 @@ exports.add = {
     const options = {
       'cid-version': request.query['cid-version'],
       'raw-leaves': request.query['raw-leaves'],
-      progress: request.query['progress'] ? progressHandler : null,
+      progress: request.query.progress ? progressHandler : null,
       pin: request.query.pin
     }
 
